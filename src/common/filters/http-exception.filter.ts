@@ -1,0 +1,52 @@
+// =============================================================
+// Mango · src/common/filters/http-exception.filter.ts
+// -------------------------------------------------------------
+// Respuestas de error uniformes:
+// { statusCode, message, error, timestamp, path }
+// Garantiza que el frontend reciba siempre { message: string }
+// tal como espera api.js.
+// =============================================================
+
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx      = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request  = ctx.getRequest<Request>();
+
+    let status  = HttpStatus.INTERNAL_SERVER_ERROR;
+    let message = 'Error interno del servidor.';
+
+    if (exception instanceof HttpException) {
+      status = exception.getStatus();
+      const res = exception.getResponse();
+      if (typeof res === 'string') {
+        message = res;
+      } else if (typeof res === 'object' && res !== null) {
+        const body = res as Record<string, any>;
+        // class-validator puede devolver array de mensajes
+        message = Array.isArray(body.message)
+          ? body.message.join(', ')
+          : (body.message ?? message);
+      }
+    } else if (exception instanceof Error) {
+      message = exception.message;
+    }
+
+    response.status(status).json({
+      statusCode: status,
+      message,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+    });
+  }
+}

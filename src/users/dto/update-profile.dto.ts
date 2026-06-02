@@ -1,0 +1,22 @@
+// =============================================================
+// Mango · src/users/dto/update-profile.dto.ts
+// =============================================================
+
+import { IsOptional, IsString, MaxLength } from 'class-validator';
+
+export class UpdateProfileDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  city?: string;
+}

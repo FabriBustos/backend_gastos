@@ -1,0 +1,113 @@
+// =============================================================
+// Mango · prisma/schema.prisma
+// -------------------------------------------------------------
+// Modelos: User, Expense, Recommendation, AdvisorAssignment
+// Provider: PostgreSQL (Railway)
+// =============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ─────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADVISOR
+}
+
+enum Category {
+  COMIDA
+  TRANSPORTE
+  SERVICIOS
+  ENTRETENIMIENTO
+  SALUD
+  COMPRAS
+  EDUCACION
+  OTROS
+}
+
+// ── Modelos ───────────────────────────────────────────────────
+
+/// Representa a todos los actores del sistema (usuarios y asesores).
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String   // bcrypt hash
+  role      Role     @default(USER)
+  phone     String   @default("")
+  city      String   @default("")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relaciones como USUARIO
+  expenses            Expense[]         // gastos registrados por este usuario
+  receivedRecommendations Recommendation[] @relation("RecommendationClient")
+
+  // Relaciones como ASESOR
+  givenRecommendations Recommendation[] @relation("RecommendationAdvisor")
+  assignedClients      AdvisorAssignment[] @relation("AdvisorAssignments")
+
+  // Relaciones como CLIENTE asignado
+  assignedToAdvisor    AdvisorAssignment[] @relation("ClientAssignments")
+
+  @@map("users")
+}
+
+/// Gasto registrado por un usuario.
+model Expense {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  merchant    String
+  category    Category
+  amount      Int      // en centavos ARS (ej: $18.470 → 1847000)
+  date        String   // ISO date YYYY-MM-DD (compatible con frontend)
+  description String   @default("")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([date])
+  @@map("expenses")
+}
+
+/// Recomendación financiera dejada por un asesor a un cliente.
+model Recommendation {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")    // cliente destinatario
+  authorId  String   @map("author_id")  // asesor que la escribe
+  title     String
+  text      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  client User @relation("RecommendationClient", fields: [userId], references: [id], onDelete: Cascade)
+  author User @relation("RecommendationAdvisor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("recommendations")
+}
+
+/// Asignación explícita de un cliente a un asesor.
+/// Un asesor solo puede ver/gestionar los clientes que tiene asignados.
+model AdvisorAssignment {
+  id         String   @id @default(cuid())
+  advisorId  String   @map("advisor_id")
+  clientId   String   @map("client_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  advisor User @relation("AdvisorAssignments", fields: [advisorId], references: [id], onDelete: Cascade)
+  client  User @relation("ClientAssignments",  fields: [clientId],  references: [id], onDelete: Cascade)
+
+  @@unique([advisorId, clientId]) // no se puede asignar el mismo cliente dos veces al mismo asesor
+  @@index([advisorId])
+  @@map("advisor_assignments")
+}
