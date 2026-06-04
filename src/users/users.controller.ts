@@ -29,8 +29,8 @@ export class UsersController {
    */
   @Get('users')
   @Roles(Role.ADVISOR)
-  listClients(@CurrentUser() user: { id: string }) {
-    return this.usersService.findAssignedClients(user.id);
+  listClients() {
+    return this.usersService.findAllClients();
   }
 
   /**

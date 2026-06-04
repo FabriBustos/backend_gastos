@@ -9,6 +9,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { Role } from '@prisma/client';
 
 @Injectable()
 export class UsersService {
@@ -31,17 +32,15 @@ export class UsersService {
   }
 
   /**
-   * Lista los clientes asignados al asesor.
-   * Solo retorna usuarios con role=USER que estén en advisor_assignments.
+   * Lista todos los clientes registrados (usuarios con role = USER).
    */
-  async findAssignedClients(advisorId: string) {
-    const assignments = await this.prisma.advisorAssignment.findMany({
-      where: { advisorId },
-      include: { client: true },
-      orderBy: { assignedAt: 'desc' },
+  async findAllClients() {
+    const users = await this.prisma.user.findMany({
+      where: { role: Role.USER },
+      orderBy: { joinedAt: 'desc' },
     });
 
-    return assignments.map((a) => this.toPublic(a.client));
+    return users.map((u) => this.toPublic(u));
   }
 
   /**

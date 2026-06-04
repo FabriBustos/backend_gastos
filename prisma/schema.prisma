@@ -59,6 +59,8 @@ model User {
   // Relaciones como CLIENTE asignado
   assignedToAdvisor    AdvisorAssignment[] @relation("ClientAssignments")
 
+  consultations        Consultation[]    @relation("UserConsultations")
+
   @@map("users")
 }
 
@@ -111,4 +113,19 @@ model AdvisorAssignment {
   @@unique([advisorId, clientId]) // no se puede asignar el mismo cliente dos veces al mismo asesor
   @@index([advisorId])
   @@map("advisor_assignments")
+}
+
+/// Consulta de un cliente al asesor financiero.
+model Consultation {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  question    String
+  answer      String?
+  answeredAt  DateTime? @map("answered_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user User @relation("UserConsultations", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("consultations")
 }

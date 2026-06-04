@@ -63,13 +63,6 @@ export class ExpensesService {
 
     if (requesterRole === 'advisor') {
       if (!targetUserId) return []; // asesor sin filtro → vacío (seguridad)
-
-      // Verificar que el cliente esté asignado a este asesor
-      const assignment = await this.prisma.advisorAssignment.findFirst({
-        where: { advisorId: requesterId, clientId: targetUserId },
-      });
-      if (!assignment) throw new ForbiddenException('Ese cliente no está asignado a vos.');
-
       userId = targetUserId;
     } else {
       userId = requesterId;
