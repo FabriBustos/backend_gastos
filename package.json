@@ -8,6 +8,7 @@
   "scripts": {
     "build": "prisma generate && nest build",
     "start": "node dist/main",
+    "start:local": "nest build && node dist/main",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "db:push": "prisma db push",
