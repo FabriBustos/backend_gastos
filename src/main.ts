@@ -37,8 +37,8 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
 
   const port = parseInt(process.env.PORT ?? '3000', 10);
-  await app.listen(port);
-  console.log(`\n🥭 Mango API corriendo en: http://localhost:${port}\n`);
+  await app.listen(port, '0.0.0.0');
+  console.log(`\n🥭 Mango API corriendo en el puerto ${port}\n`);
 }
 
 bootstrap();
