@@ -11,14 +11,14 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // ── CORS ─────────────────────────────────────────────────────
-  // Permite cualquier origen en dev. En producción, setear
-  // CORS_ORIGIN con la URL del frontend.
-  const origin = process.env.CORS_ORIGIN || '*';
+  // Acepta cualquier origen (wildcard) para evitar bloqueos en
+  // Railway y desarrollo local. credentials: false es requerido
+  // cuando origin es '*' (restricción del estándar CORS).
   app.enableCors({
-    origin,
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: origin !== '*',
+    credentials: false,
   });
 
   // ── Validación global ─────────────────────────────────────────
