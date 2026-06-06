@@ -1,7 +1,7 @@
 // =============================================================
 // Mango · src/tickets/tickets.service.ts
 // -------------------------------------------------------------
-// Procesa imágenes de tickets usando GPT-4o Vision (OpenAI).
+// Procesa imágenes de tickets usando Gemini 1.5 Flash (Google).
 // Extrae: merchant, amount, category, date, confidence, description.
 //
 // Contrato de respuesta (NO modificar — el frontend lo espera):
@@ -9,7 +9,7 @@
 // =============================================================
 
 import { Injectable, Logger } from '@nestjs/common';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export interface OcrResult {
   merchant:    string;
@@ -35,12 +35,10 @@ const VALID_CATEGORIES = [
 @Injectable()
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name);
-  private readonly openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
+  private readonly genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
   /**
-   * Procesa un ticket mediante GPT-4o Vision.
+   * Procesa un ticket mediante Gemini.
    * Si no hay archivo o falla la API, devuelve un fallback seguro.
    */
   async processTicket(file?: Express.Multer.File): Promise<OcrResult> {
@@ -50,25 +48,29 @@ export class TicketsService {
     }
 
     try {
-      return await this.callOpenAI(file.buffer, file.mimetype);
+      return await this.callGemini(file.buffer, file.mimetype);
     } catch (err) {
-      this.logger.error('Error al llamar a OpenAI API:', err?.message ?? err);
+      this.logger.error('Error al llamar a Gemini API:', err?.message ?? err);
       return this.fallback();
     }
   }
 
-  // ── Llamada a OpenAI ──────────────────────────────────────────
+  // ── Llamada a Gemini ──────────────────────────────────────────
 
-  private async callOpenAI(buffer: Buffer, mimeType: string): Promise<OcrResult> {
-    // Convertir buffer a base64 data URL
-    const supportedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  private async callGemini(buffer: Buffer, mimeType: string): Promise<OcrResult> {
+    const supportedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif'];
     const validMime = supportedTypes.includes(mimeType) ? mimeType : 'image/jpeg';
-    const base64Image = `data:${validMime};base64,${buffer.toString('base64')}`;
+
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-1.5-flash',
+      generationConfig: {
+        responseMimeType: 'application/json',
+      },
+    });
 
     const prompt = `Sos un sistema de OCR especializado en tickets y facturas de Argentina.
 
 Analizá la imagen y extraé la siguiente información en formato JSON.
-Respondé ÚNICAMENTE con el JSON, sin texto adicional, sin markdown, sin explicaciones.
 
 Estructura requerida:
 {
@@ -83,54 +85,33 @@ Estructura requerida:
 Reglas:
 - "merchant": el nombre del local, supermercado, empresa, etc. Si no se ve claramente, poné "Comercio".
 - "amount": el total a pagar en pesos argentinos, como número sin símbolos. Si hay varios totales, usá el más grande (total final). Si no se ve, poné 0.
-- "category": elegí la más apropiada de la lista. Supermercados → comida. Nafta/SUBE → transporte. Farmacia → salud. Streaming/cine → entretenimiento. Luz/gas/agua → servicios. Ropa/electrónica → compras. Universidad/libros → educacion. Cualquier otra → otros.
+- "category": elegí la más apropiada de la lista. Supermercados o tiendas de comida → comida. Combustible/peajes/SUBE → transporte. Farmacia/médico → salud. Streaming/cine/juegos → entretenimiento. Luz/gas/agua/internet/teléfono → servicios. Ropa/electrónica/hogar → compras. Universidad/cursos/libros → educacion. Cualquier otra → otros.
 - "date": fecha del ticket en formato YYYY-MM-DD. Si no se ve, usá la fecha de hoy: ${new Date().toISOString().slice(0, 10)}.
 - "confidence": tu nivel de confianza en los datos extraídos, entre 0 y 1.
-- "description": una frase corta describiendo la compra (ej: "Compra en supermercado", "Carga de combustible").
+- "description": una frase corta describiendo la compra (ej: "Compra en supermercado", "Carga de combustible").`;
 
-Respondé SOLO con el JSON.`;
+    const imagePart = {
+      inlineData: {
+        data: buffer.toString('base64'),
+        mimeType: validMime,
+      },
+    };
 
-    const response = await this.openai.chat.completions.create({
-      model: 'gpt-4o-mini', // más barato que gpt-4o, igual de bueno para OCR
-      max_tokens: 300,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: {
-                url: base64Image,
-                detail: 'low', // 'low' es suficiente para tickets y más barato
-              },
-            },
-            {
-              type: 'text',
-              text: prompt,
-            },
-          ],
-        },
-      ],
-    });
+    const result = await model.generateContent([prompt, imagePart]);
+    const response = await result.response;
+    const text = response.text();
 
-    const text = response.choices[0]?.message?.content ?? '';
     return this.parseResponse(text);
   }
 
   // ── Parser de respuesta ───────────────────────────────────────
 
   private parseResponse(text: string): OcrResult {
-    // Limpiar posibles backticks o markdown que GPT agregue
-    const clean = text
-      .replace(/```json/gi, '')
-      .replace(/```/g, '')
-      .trim();
-
     let parsed: any;
     try {
-      parsed = JSON.parse(clean);
+      parsed = JSON.parse(text);
     } catch {
-      this.logger.warn('No se pudo parsear la respuesta de OpenAI:', clean);
+      this.logger.warn('No se pudo parsear la respuesta de Gemini:', text);
       return this.fallback();
     }
 
@@ -163,7 +144,6 @@ Respondé SOLO con el JSON.`;
   }
 
   // ── Fallback seguro ───────────────────────────────────────────
-  // Se usa cuando no hay archivo o cuando la API falla.
 
   private fallback(): OcrResult {
     return {
