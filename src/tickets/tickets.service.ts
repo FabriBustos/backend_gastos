@@ -1,84 +1,178 @@
 // =============================================================
 // Mango · src/tickets/tickets.service.ts
 // -------------------------------------------------------------
-// Lógica de procesamiento de tickets / OCR.
+// Procesa imágenes de tickets usando GPT-4o Vision (OpenAI).
+// Extrae: merchant, amount, category, date, confidence, description.
 //
-// ESTADO ACTUAL: stub simulado.
-// La función processTicket() devuelve datos de ejemplo aleatorios
-// que replican exactamente la estructura que espera el frontend.
-//
-// PARA CONECTAR CON IA REAL:
-//   1. Instalar el SDK de tu proveedor (ej: @google-cloud/vision,
-//      openai, aws-sdk/client-textract).
-//   2. Reemplazar el cuerpo de realOcr() con la llamada a la API.
-//   3. Agregar las env vars necesarias en .env.
-//
-// El contrato de respuesta que espera el frontend (api.js):
+// Contrato de respuesta (NO modificar — el frontend lo espera):
 //   { merchant, amount, category, date, confidence, description }
 // =============================================================
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import OpenAI from 'openai';
 
 export interface OcrResult {
   merchant:    string;
   amount:      number;
   category:    string;
-  date:        string;
-  confidence:  number;
+  date:        string;       // YYYY-MM-DD
+  confidence:  number;       // 0–1
   description: string;
 }
 
+// Categorías válidas que maneja el frontend
+const VALID_CATEGORIES = [
+  'comida',
+  'transporte',
+  'salud',
+  'entretenimiento',
+  'servicios',
+  'compras',
+  'educacion',
+  'otros',
+] as const;
+
 @Injectable()
 export class TicketsService {
-  /** Muestra demo — fecha relativa a "hoy" en producción real. */
-  private todayOffset(days: number): string {
-    const d = new Date();
-    d.setDate(d.getDate() + days);
-    return d.toISOString().slice(0, 10);
-  }
+  private readonly logger = new Logger(TicketsService.name);
+  private readonly openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
 
   /**
-   * Procesa un ticket / imagen.
-   * @param file — objeto Multer con el buffer de la imagen subida.
-   *
-   * ─── Para integrar OCR real ──────────────────────────────────
-   * Descomenta el bloque `realOcr` y completá la lógica con tu
-   * proveedor de IA. El método recibe `file.buffer` (Uint8Array).
-   * ─────────────────────────────────────────────────────────────
+   * Procesa un ticket mediante GPT-4o Vision.
+   * Si no hay archivo o falla la API, devuelve un fallback seguro.
    */
   async processTicket(file?: Express.Multer.File): Promise<OcrResult> {
-    // ── Stub simulado ────────────────────────────────────────────
-    const samples: OcrResult[] = [
-      { merchant: 'Coto',          amount: 18470,  category: 'comida',      date: this.todayOffset(-2), confidence: 0.97, description: 'Importado desde ticket' },
-      { merchant: 'YPF',           amount: 24500,  category: 'transporte',  date: this.todayOffset(-1), confidence: 0.95, description: 'Importado desde ticket' },
-      { merchant: 'Farmacity',     amount: 9320,   category: 'salud',       date: this.todayOffset(0),  confidence: 0.92, description: 'Importado desde ticket' },
-      { merchant: 'Mercado Libre', amount: 56990,  category: 'compras',     date: this.todayOffset(-4), confidence: 0.91, description: 'Importado desde ticket' },
-      { merchant: 'Netflix',       amount: 4999,   category: 'entretenimiento', date: this.todayOffset(0), confidence: 0.99, description: 'Importado desde ticket' },
-      { merchant: 'Edenor',        amount: 15200,  category: 'servicios',   date: this.todayOffset(-3), confidence: 0.94, description: 'Importado desde ticket' },
-    ];
+    if (!file?.buffer) {
+      this.logger.warn('No se recibió archivo — devolviendo fallback.');
+      return this.fallback();
+    }
 
-    const result = samples[Math.floor(Math.random() * samples.length)];
-
-    // Simula latencia de procesamiento de IA
-    await new Promise((r) => setTimeout(r, 600));
-
-    return result;
-
-    // ── Para activar OCR real, reemplazar el bloque de arriba ────
-    //
-    // return await this.realOcr(file.buffer, file.mimetype);
+    try {
+      return await this.callOpenAI(file.buffer, file.mimetype);
+    } catch (err) {
+      this.logger.error('Error al llamar a OpenAI API:', err?.message ?? err);
+      return this.fallback();
+    }
   }
 
-  /**
-   * Placeholder para integración con un proveedor de OCR/IA real.
-   * Implementar según el SDK elegido.
-   */
-  // private async realOcr(buffer: Buffer, mimeType: string): Promise<OcrResult> {
-  //   // Ejemplo con Google Cloud Vision:
-  //   // const [result] = await visionClient.textDetection({ image: { content: buffer } });
-  //   // const text = result.fullTextAnnotation?.text ?? '';
-  //   // ... parsear text para extraer merchant, amount, date ...
-  //   // return { merchant, amount, category: 'otros', date, confidence, description };
-  //   throw new Error('OCR real no implementado aún.');
-  // }
+  // ── Llamada a OpenAI ──────────────────────────────────────────
+
+  private async callOpenAI(buffer: Buffer, mimeType: string): Promise<OcrResult> {
+    // Convertir buffer a base64 data URL
+    const supportedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const validMime = supportedTypes.includes(mimeType) ? mimeType : 'image/jpeg';
+    const base64Image = `data:${validMime};base64,${buffer.toString('base64')}`;
+
+    const prompt = `Sos un sistema de OCR especializado en tickets y facturas de Argentina.
+
+Analizá la imagen y extraé la siguiente información en formato JSON.
+Respondé ÚNICAMENTE con el JSON, sin texto adicional, sin markdown, sin explicaciones.
+
+Estructura requerida:
+{
+  "merchant": "nombre del comercio o establecimiento",
+  "amount": 1234.56,
+  "category": "una de: comida, transporte, salud, entretenimiento, servicios, compras, educacion, otros",
+  "date": "YYYY-MM-DD",
+  "confidence": 0.95,
+  "description": "descripción breve del gasto"
+}
+
+Reglas:
+- "merchant": el nombre del local, supermercado, empresa, etc. Si no se ve claramente, poné "Comercio".
+- "amount": el total a pagar en pesos argentinos, como número sin símbolos. Si hay varios totales, usá el más grande (total final). Si no se ve, poné 0.
+- "category": elegí la más apropiada de la lista. Supermercados → comida. Nafta/SUBE → transporte. Farmacia → salud. Streaming/cine → entretenimiento. Luz/gas/agua → servicios. Ropa/electrónica → compras. Universidad/libros → educacion. Cualquier otra → otros.
+- "date": fecha del ticket en formato YYYY-MM-DD. Si no se ve, usá la fecha de hoy: ${new Date().toISOString().slice(0, 10)}.
+- "confidence": tu nivel de confianza en los datos extraídos, entre 0 y 1.
+- "description": una frase corta describiendo la compra (ej: "Compra en supermercado", "Carga de combustible").
+
+Respondé SOLO con el JSON.`;
+
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o-mini', // más barato que gpt-4o, igual de bueno para OCR
+      max_tokens: 300,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: {
+                url: base64Image,
+                detail: 'low', // 'low' es suficiente para tickets y más barato
+              },
+            },
+            {
+              type: 'text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+    });
+
+    const text = response.choices[0]?.message?.content ?? '';
+    return this.parseResponse(text);
+  }
+
+  // ── Parser de respuesta ───────────────────────────────────────
+
+  private parseResponse(text: string): OcrResult {
+    // Limpiar posibles backticks o markdown que GPT agregue
+    const clean = text
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
+      .trim();
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(clean);
+    } catch {
+      this.logger.warn('No se pudo parsear la respuesta de OpenAI:', clean);
+      return this.fallback();
+    }
+
+    // Validar y sanitizar cada campo
+    const merchant = typeof parsed.merchant === 'string' && parsed.merchant.trim()
+      ? parsed.merchant.trim()
+      : 'Comercio';
+
+    const amount = typeof parsed.amount === 'number' && parsed.amount > 0
+      ? Math.round(parsed.amount * 100) / 100
+      : 0;
+
+    const category = VALID_CATEGORIES.includes(parsed.category)
+      ? parsed.category
+      : 'otros';
+
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)
+      ? parsed.date
+      : new Date().toISOString().slice(0, 10);
+
+    const confidence = typeof parsed.confidence === 'number'
+      ? Math.min(1, Math.max(0, parsed.confidence))
+      : 0.8;
+
+    const description = typeof parsed.description === 'string' && parsed.description.trim()
+      ? parsed.description.trim()
+      : 'Importado desde ticket';
+
+    return { merchant, amount, category, date, confidence, description };
+  }
+
+  // ── Fallback seguro ───────────────────────────────────────────
+  // Se usa cuando no hay archivo o cuando la API falla.
+
+  private fallback(): OcrResult {
+    return {
+      merchant:    'Comercio',
+      amount:      0,
+      category:    'otros',
+      date:        new Date().toISOString().slice(0, 10),
+      confidence:  0,
+      description: 'No se pudo leer el ticket automáticamente.',
+    };
+  }
 }
